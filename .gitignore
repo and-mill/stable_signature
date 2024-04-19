@@ -1,0 +1,7 @@
+images/*
+*.pyc
+loss/losses/*.pth
+sd/*
+src/loss/losses/*.pth
+trained_decoders/*
+models/*

@@ -1,119 +1,70 @@
 import torch
 import fire
-import re
+from pathlib import Path
 
-from omegaconf import OmegaConf 
-from diffusers import StableDiffusionPipeline 
-from utils_model import load_model_from_config 
+from watermark_utils import load_model, decode_message_pil, eval_message
 
 from PIL import Image
 import torch
 import torchvision.transforms as transforms
+import numpy as np
+
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 
-KEY = '111010110101000001010111010011010100010000100111' # model key
-
-
-def msg2str(msg):
-    return "".join([('1' if el else '0') for el in msg])
-
-
-def str2msg(str):
-    return [True if el=='1' else False for el in str]
-
-
-def decode_message_path(path):
-    transform_imnet = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])
-    ])
-    img = Image.open("path/to/generated/img.png")
-    img = transform_imnet(img).unsqueeze(0).to("cuda")
-    return decode_message(img)
-    
-    
-def decode_message_pil(pilimg):
-    transform_imnet = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])
-    ])
-    img = transform_imnet(pilimg).unsqueeze(0).to("cuda")
-    return decode_message(img)
-
-
-def decode_message(img):
-    msg_extractor = torch.jit.load("models/dec_48b_whit.torchscript.pt").to("cuda")
-    msg = msg_extractor(img) # b c h w -> b k
-    bool_msg = (msg>0).squeeze().cpu().numpy().tolist()
-    print("Extracted message: ", msg2str(bool_msg))
-    return bool_msg
-
-
-def eval_message(msg):
-    bool_key = str2msg(KEY)
-
-    # compute difference between model key and message extracted from image
-    diff = [msg[i] != bool_key[i] for i in range(len(msg))]
-    bit_acc = 1 - sum(diff)/len(diff)
-    print("Bit accuracy: ", bit_acc)
-
-    # compute p-value
-    from scipy.stats import binomtest
-    pval = binomtest(len(diff)-sum(diff), len(diff), 0.5, alternative='greater')
-    print("p-value of statistical test: ", pval)
-    
-    return bit_acc, pval
-
-
-def load_model(device, use_watermarked=True):
-    # load original diffusers pipe
-    model = "stabilityai/stable-diffusion-2"
-    pipe = StableDiffusionPipeline.from_pretrained(model).to(device)
-    
-    if use_watermarked:
-        # load stable-diffusion codebase decoder
-        ldm_config = "sd/stable-diffusion-2-1-base/v2-inference.yaml"
-        ldm_ckpt = "sd/stable-diffusion-2-1-base/v2-1_512-ema-pruned.ckpt"
-
-        print(f'>>> Building LDM model with config {ldm_config} and weights from {ldm_ckpt}...')
-        config = OmegaConf.load(f"{ldm_config}")
-        ldm_ae = load_model_from_config(config, ldm_ckpt)
-        ldm_aef = ldm_ae.first_stage_model
-        ldm_aef.eval()
-        
-        state_dict = torch.load("models/sd2_decoder.pth")
-        unexpected_keys = ldm_aef.load_state_dict(state_dict, strict=False)
-        print(unexpected_keys)
-        print("you should check that the decoder keys are correctly matched")
-        
-        # replace decode of vae in diffusers pipe with custom LDM decoder 
-        pipe.vae.decode = (lambda x,  *args, **kwargs: ldm_aef.decode(x).unsqueeze(0))
-        
-    return pipe
-
-
-def main(device=0, path="cat.no_wm.png", savepath="cat.wma.png"):
+def main(device=0, path="/USERSPACE/lukovdg1/coco2017/train2017/", outputdir="coco_wm_1000", outputdir_original=None, maximg=1000, min_res_filter=512):
     device = torch.device("cuda", device)
     
     print("start")
     pipe = load_model(device, use_watermarked=True)
+    msg_extractor = torch.jit.load("models/dec_48b_whit.torchscript.pt").to(device)
     print("loaded")
+    
+    numimg = 0
 
-    transform_imnet = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])
-    ])
-    
-    img = Image.open(path)
-    img = transform_imnet(img).unsqueeze(0).to("cuda")
-    
-    z = pipe.vae.encode(img)
-    reimg = pipe.vae.decode(z.latent_dist.mode())[0]
-    
-    print("decoding message")
-    msg = decode_message(reimg)
-    print(f"decoded message: {msg}")
-    eval_message(msg)
+    for spath in Path(path).glob("*"):
+        img = Image.open(spath).convert("RGB")
+        if min(img.size) < min_res_filter:
+            continue
+        
+        img = transforms.CenterCrop(min(img.size))(img)
+        img = transforms.Resize(768)(img)
+        
+        print(f"Doing {spath}")
+        orig_img = img
+        img = (transforms.ToTensor()(img) - 0.5)/0.5
+        img = img.unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            z = pipe.vae.encode(img)
+            reimg = pipe.vae.decode(z.latent_dist.mode())[0]
+            reimg = reimg[0] * 0.5 + 0.5
+        
+        # print("decoding message")
+        reimg = transforms.ToPILImage()(reimg.clamp(0, 1))
+        msg = decode_message_pil(reimg, msg_extractor=msg_extractor, device=device)
+        print(f"decoded message: {msg}")
+        eval_message(msg)
+        
+        psnr = peak_signal_noise_ratio(np.asarray(orig_img), np.asarray(reimg))
+        ssim = structural_similarity(np.asarray(orig_img), np.asarray(reimg), channel_axis=2)
+        print(f"PSNR: {psnr}, SSIM: {ssim}")
+        
+        if outputdir is not None:
+            outputpath = Path(outputdir) / (spath.stem + ".wm.png")
+            if not outputpath.parent.exists():
+                Path.mkdir(outputpath.parent, parents=True, exist_ok=False)
+            reimg.save(outputpath)
+            
+        if outputdir_original is not None:
+            outputpath = Path(outputdir_original) / (spath.stem + ".original.png")
+            if not outputpath.parent.exists():
+                Path.mkdir(outputpath.parent, parents=True, exist_ok=False)
+            reimg.save(outputpath)
+            
+        numimg += 1
+        if numimg == maximg:
+            break
 
 
 if __name__ == "__main__":
