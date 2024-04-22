@@ -21,16 +21,33 @@ cd stable_signature
 To install the main dependencies, we recommand using conda.
 [PyTorch](https://pytorch.org/) can be installed with:
 ```cmd
-conda install -c pytorch torchvision pytorch==1.12.0 cudatoolkit==11.3
+<!-- conda install -c pytorch torchvision pytorch==1.12.0 cudatoolkit==11.3  (This does not work for me) -->
+conda install -c pytorch torchvision pytorch==1.12.0 nvidia/label/cuda-11.3.1::cuda-toolkit
 ```
 
 Install the remaining dependencies with pip:
 ```cmd
-pip install -r requirements.txt
+<!-- pip install -r requirements.txt -->
+TMPDIR=/home/host_mueller/tmp/ pip install --cache-dir=/home/host_mueller/cache/ -r requirements.txt   (This is just me)
 ```
 
 This codebase has been developed with python version 3.8, PyTorch version 1.12.0, CUDA 11.3.
 
+### and-mill: Additional steps that I needed to take:
+
+Last step, happened to me. Need to reinstall wcwidth:
+```
+TMPDIR=/home/host_mueller/mueller/tmp/ pip3 install --cache-dir=/home/host_mueller/mueller/cache/ --user --force-reinstall wcwidth
+```
+
+Also, create directory "sd". Download into it:
+```
+https://github.com/Stability-AI/stablediffusion/blob/main/configs/stable-diffusion/v2-inference.yaml
+```
+and
+```
+https://huggingface.co/stabilityai/stable-diffusion-2/blob/main/768-v-ema.ckpt
+```
 
 ### Models and data
 
@@ -124,6 +141,12 @@ In this case, the state dict only contains the 'ldm_decoder' key, so you only ne
 
 #### With Diffusers
 
+Note: Had to do
+```
+pip install --upgrade diffusers transformers
+```
+To make this run.
+
 Here is a code snippet that could be used to reload the decoder with the Diffusers library (transformers==4.25.1, diffusers==0.25.1). (Still WIP, this might be updated in the future!)
 
 ```python
@@ -160,7 +183,14 @@ img.save("cat.png")
 
 ### Decode and Evaluate
 
-The `decode.ipynb` notebook contains a full example of the decoding and associated statistical test.
+The `decoding.ipynb` notebook contains a full example of the decoding and associated statistical test.
+
+Note: needed to install jupyter correctly first:
+
+```
+conda install ipykernel
+conda install ipywidgets
+```
 
 The `run_eval.py` script can be used to get the robustness and quality metrics on a folder of images.
 For instance:
