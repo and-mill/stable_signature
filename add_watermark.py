@@ -12,7 +12,7 @@ import numpy as np
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 
-def main(device=0, path="/USERSPACE/lukovdg1/coco2017/train2017/", outputdir="coco_wm_1000", outputdir_original=None, maximg=1000, min_res_filter=512):
+def main(device=0, path="/USERSPACE/lukovdg1/coco2017/train2017/", outputdir="coco_wm_1000", outputdir_original="coco_original_1000", maximg=1000, min_res_filter=512):
     device = torch.device("cuda", device)
     
     print("start")
@@ -51,13 +51,13 @@ def main(device=0, path="/USERSPACE/lukovdg1/coco2017/train2017/", outputdir="co
         print(f"PSNR: {psnr}, SSIM: {ssim}")
         
         if outputdir is not None:
-            outputpath = Path(outputdir) / (spath.stem + ".wm.png")
+            outputpath = Path(outputdir) / (spath.stem + ".png")
             if not outputpath.parent.exists():
                 Path.mkdir(outputpath.parent, parents=True, exist_ok=False)
             reimg.save(outputpath)
             
         if outputdir_original is not None:
-            outputpath = Path(outputdir_original) / (spath.stem + ".original.png")
+            outputpath = Path(outputdir_original) / (spath.stem + ".png")
             if not outputpath.parent.exists():
                 Path.mkdir(outputpath.parent, parents=True, exist_ok=False)
             reimg.save(outputpath)
