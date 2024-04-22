@@ -16,3 +16,6 @@ diffusers
 invisible-watermark
 kornia
 # torch==1.12.1+cu113
+
+fire
+lpips
