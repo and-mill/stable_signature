@@ -41,7 +41,7 @@ def decode_message_pil(pilimg, msg_extractor=None, device="cuda", verbose=True):
 def decode_message(img, msg_extractor=None, device="cuda", verbose=True):
     if msg_extractor is None:
         msg_extractor = torch.jit.load("models/dec_48b_whit.torchscript.pt").to(device)
-    msg = msg_extractor(img) # b c h w -> b k
+    msg = msg_extractor(img.to(device)) # b c h w -> b k
     bool_msg = (msg>0).squeeze().cpu().numpy().tolist()
     if verbose:
         print("Extracted message: ", msg2str(bool_msg))
