@@ -65,9 +65,9 @@ def get_parser():
     aa("--output_dir", type=str, default="output/", help="Output directory for logs and images (Default: /output)")
 
     group = parser.add_argument_group('Marking parameters')
-    aa("--num_bits", type=int, default=32, help="Number of bits of the watermark (Default: 32)")
+    aa("--num_bits", type=int, default=48, help="Number of bits of the watermark (Default: 32)")
     aa("--redundancy", type=int, default=1, help="Redundancy of the watermark (Default: 1)")
-    aa("--img_size", type=int, default=128, help="Image size")
+    aa("--img_size", type=int, default=256, help="Image size")
 
     group = parser.add_argument_group('Encoder parameters')
     aa("--encoder", type=str, default="hidden", help="Encoder type (Default: hidden)")
@@ -86,11 +86,11 @@ def get_parser():
     aa('--saveckp_freq', default=100, type=int)
     aa('--saveimg_freq', default=10, type=int)
     aa('--resume_from', default=None, type=str, help='Checkpoint path to resume from.')
-    aa("--scaling_w", type=float, default=1.0, help="Scaling of the watermark signal. (Default: 1.0)")
+    aa("--scaling_w", type=float, default=0.3, help="Scaling of the watermark signal. (Default: 1.0)")
     aa("--scaling_i", type=float, default=1.0, help="Scaling of the original image. (Default: 1.0)")
 
     group = parser.add_argument_group('Optimization parameters')
-    aa("--epochs", type=int, default=400, help="Number of epochs for optimization. (Default: 100)")
+    aa("--epochs", type=int, default=300, help="Number of epochs for optimization. (Default: 100)")
     aa("--optimizer", type=str, default="Adam", help="Optimizer to use. (Default: Adam)")
     aa("--scheduler", type=str, default=None, help="Scheduler to use. (Default: None)")
     aa("--lambda_w", type=float, default=1.0, help="Weight of the watermark loss. (Default: 1.0)")
@@ -100,7 +100,7 @@ def get_parser():
     aa("--loss_w_type", type=str, default='bce', help="Loss type. 'bce' for binary cross entropy, 'cossim' for cosine similarity (Default: bce)")
 
     group = parser.add_argument_group('Loader parameters')
-    aa("--batch_size", type=int, default=16, help="Batch size. (Default: 16)")
+    aa("--batch_size", type=int, default=64, help="Batch size. (Default: 16)")
     aa("--batch_size_eval", type=int, default=64, help="Batch size. (Default: 128)")
     aa("--workers", type=int, default=8, help="Number of workers for data loading. (Default: 8)")
 
@@ -121,7 +121,7 @@ def get_parser():
     aa('--debug_slurm', action='store_true')
     aa('--local_rank', default=-1, type=int)
     aa('--master_port', default=-1, type=int)
-    aa('--dist', type=utils.bool_inst, default=True, help='Enabling distributed training')
+    aa('--dist', type=utils.bool_inst, default=False, help='Enabling distributed training')
 
     group = parser.add_argument_group('Misc')
     aa('--seed', default=0, type=int, help='Random seed')
