@@ -100,7 +100,7 @@ def get_parser():
     aa("--loss_w_type", type=str, default='bce', help="Loss type. 'bce' for binary cross entropy, 'cossim' for cosine similarity (Default: bce)")
 
     group = parser.add_argument_group('Loader parameters')
-    aa("--batch_size", type=int, default=64, help="Batch size. (Default: 16)")
+    aa("--batch_size", type=int, default=32, help="Batch size. (Default: 16)")
     aa("--batch_size_eval", type=int, default=64, help="Batch size. (Default: 128)")
     aa("--workers", type=int, default=8, help="Number of workers for data loading. (Default: 8)")
 
