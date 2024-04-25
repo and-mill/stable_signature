@@ -1,3 +1,4 @@
+import random
 import time
 from pytorch_lightning import seed_everything
 from pytorch_lightning.utilities.types import EPOCH_OUTPUT
@@ -309,14 +310,15 @@ class BlackBoxAttackDataset:
             imgpath = self.wmpath / self.filenames[i]
             img = Image.open(imgpath).convert("RGB")
             imgtensor = self.transform(img)
-            if self.wm_fraction < 1:     # if equals 1, then use the entire watermarked image instead of patching it
+            wm_fraction = random.random() * (1 - self.wm_fraction) + self.wm_fraction
+            if wm_fraction < 1:     # if equals 1, then use the entire watermarked image instead of patching it
                 realimgpath = self.realpath / self.filenames[i]
                 realimg = Image.open(realimgpath).convert("RGB")
                 realimgtensor = self.transform(realimg)
                 # select random mask and collage according to mask; use perlin noise
                 noisemap = generate_random_rmap(img.size)
                 values = noisemap.flatten().sort().values
-                composite_threshold = values[round(len(values) * self.wm_fraction)]
+                composite_threshold = values[round(len(values) * wm_fraction)]
                 mixmask = (noisemap > composite_threshold).float()[None]       # is one where real image must be
                 mixmask = transforms.functional.gaussian_blur(mixmask, kernel_size=(11, 11))
                 imgtensor = mixmask * realimgtensor + (1 - mixmask) * imgtensor
@@ -441,11 +443,12 @@ class LitClassifier(pl.LightningModule):
         
         
     
-def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000", lr=5e-4, batsize=16, device=0, seed=42, 
-         debug=False):
+def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000", 
+         lr=5e-4, batsize=16, epochs=15, device=0, seed=42, 
+         debug=False, ckpt=None, finetune=False):
     seed_everything(seed)
     VALID_BATSIZE = 8
-    WM_FRACTION = 0.15
+    WM_FRACTION = 0.10
     
     numworkers = batsize
     if debug:
@@ -456,15 +459,21 @@ def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000", lr
     
     model = LitClassifier(lr=lr)
     
+    dotrain = True
+    if ckpt is not None:
+        print(f"Loading from checkpoint: \"{ckpt}\"")
+        model = LitClassifier.load_from_checkpoint(ckpt)
+        dotrain = finetune
+    
     # load data
     print("load data")
     trainds, validds = BlackBoxAttackDataset.create_datasets(wmpath, realpath, wm_fraction=WM_FRACTION)
     traindl = DataLoader(trainds, batch_size=batsize, shuffle=True, num_workers=numworkers)
     validdl = DataLoader(validds, batch_size=VALID_BATSIZE, shuffle=False, num_workers=VALID_BATSIZE)
     
-    testds = BlackBoxAttackDataset(wmpath="images/generated", realpath=None)
+    testds = BlackBoxAttackDataset(wmpath="images/generatedmore", realpath=None)
     testdl = DataLoader(testds, batch_size=VALID_BATSIZE, shuffle=False, num_workers=VALID_BATSIZE)
-    print(f"data loaded: {len(trainds)} train examples, {len(traindl)} batches, {len(validds)} test examples, {len(validdl)} batches")
+    print(f"data loaded: {len(trainds)} train examples, {len(traindl)} batches, {len(validds)} validation examples, {len(validdl)} batches")
     
     
     # msg_extractor = torch.jit.load("models/dec_48b_whit.torchscript.pt").to(device)
@@ -504,24 +513,65 @@ def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000", lr
     print(f"Test accuracy on generated watermarked images before training: {np.mean(testaccs):.3f}")
         
     print("train model")
-    checkpointer = ModelCheckpoint(dirpath="blackbox_checkpoints/resnet_{seed}",
+    checkpointer = ModelCheckpoint(dirpath=f"blackbox_checkpoints/resnet_{seed}",
                                    save_weights_only=True, every_n_epochs=1, filename="{epoch}-{val_acc:.2f}")
-    trainer = pl.Trainer(gpus=[gpu], max_epochs=3, callbacks=[checkpointer])
-    trainer.fit(model, traindl, validdl)
+    trainer = pl.Trainer(gpus=[gpu], max_epochs=epochs, callbacks=[checkpointer])
     
-    # test
-    testaccs = []
-    for batch in testdl:
-        outputs = model.model(batch[0])
-        acc = ((outputs.squeeze() > 0).float() == batch[1].squeeze()).float().cpu().numpy().tolist()
-        testaccs.extend(acc)
-    print(f"Test accuracy on generated watermarked images after training: {np.mean(testaccs):.3f}")
+    validds.wm_fraction = 1.
+    ret = trainer.test(model, validdl)
+    print(ret)
+    validds.wm_fraction = WM_FRACTION
+    
+    if dotrain:
+        print("training")
+        trainer.fit(model, traindl, validdl)
+    
+    with torch.no_grad():
+        
+        print("testing with 100% watermarked real images")
+        validds.wm_fraction = 1.
+        ret = trainer.test(model, validdl)
+        validds.wm_fraction = WM_FRACTION
+        
+        print("testing with 50% watermarked real images")
+        validds.wm_fraction = 0.5
+        ret = trainer.test(model, validdl)
+        validds.wm_fraction = WM_FRACTION
+        
+        model.model.eval()
+        model.model.to(device)
+        
+        # test on valid with 100% watermarked
+        validaccs = []
+        validds.wm_fraction = 1.
+        for batch in tqdm.tqdm(validdl):
+            outputs = model.model(batch[0].to(device))
+            acc = ((outputs.squeeze() > 0).cpu().float() == batch[1].squeeze()).float().cpu().numpy().tolist()
+            validaccs.extend(acc)
+        print(f"Test accuracy on 100% watermarked real images after training: {np.mean(validaccs):.3f}")
+        
+        # test on valid with 50% watermarked
+        validaccs = []
+        validds.wm_fraction = 0.5
+        for batch in tqdm.tqdm(validdl):
+            outputs = model.model(batch[0].to(device))
+            acc = ((outputs.squeeze() > 0).cpu().float() == batch[1].squeeze()).float().cpu().numpy().tolist()
+            validaccs.extend(acc)
+        print(f"Test accuracy on 50% watermarked real images after training: {np.mean(validaccs):.3f}")
+        
+        # test
+        testaccs = []
+        for batch in tqdm.tqdm(testdl):
+            outputs = model.model(batch[0].to(device))
+            acc = ((outputs.squeeze() > 0).cpu().float() == batch[1].squeeze()).float().cpu().numpy().tolist()
+            testaccs.extend(acc)
+        print(f"Test accuracy on generated watermarked images after training: {np.mean(testaccs):.3f}")
+                
+            
             
         
         
-    
-    
-    
+        
 
     
 
