@@ -65,7 +65,7 @@ def get_parser():
     aa("--output_dir", type=str, default="output/", help="Output directory for logs and images (Default: /output)")
 
     group = parser.add_argument_group('Marking parameters')
-    aa("--num_bits", type=int, default=48, help="Number of bits of the watermark (Default: 32)")
+    aa("--num_bits", type=int, default=48, help="Number of bits of the watermark (Default:482)")
     aa("--redundancy", type=int, default=1, help="Redundancy of the watermark (Default: 1)")
     aa("--img_size", type=int, default=256, help="Image size")
 
@@ -91,7 +91,7 @@ def get_parser():
 
     group = parser.add_argument_group('Optimization parameters')
     aa("--epochs", type=int, default=300, help="Number of epochs for optimization. (Default: 100)")
-    aa("--optimizer", type=str, default="Adam", help="Optimizer to use. (Default: Adam)")
+    aa("--optimizer", type=str, default="Lamb", help="Optimizer to use. (Default: Lamb)")
     aa("--scheduler", type=str, default=None, help="Scheduler to use. (Default: None)")
     aa("--lambda_w", type=float, default=1.0, help="Weight of the watermark loss. (Default: 1.0)")
     aa("--lambda_i", type=float, default=0.0, help="Weight of the image loss. (Default: 0.0)")
@@ -101,21 +101,22 @@ def get_parser():
 
     group = parser.add_argument_group('Loader parameters')
     aa("--batch_size", type=int, default=32, help="Batch size. (Default: 16)")
-    aa("--batch_size_eval", type=int, default=64, help="Batch size. (Default: 128)")
+    aa("--batch_size_eval", type=int, default=32, help="Batch size. (Default: 128)")
     aa("--workers", type=int, default=8, help="Number of workers for data loading. (Default: 8)")
 
     group = parser.add_argument_group('Attenuation parameters')
     aa("--attenuation", type=str, default=None, help="Attenuation type. (Default: jnd)")
     aa("--scale_channels", type=utils.bool_inst, default=True, help="Use channel scaling. (Default: True)")
 
+    # and-mill: These params are used for attack layer during HiDDeN training as described in Appendix A1. Defaults are way off from what the appendix say.
     group = parser.add_argument_group('DA parameters')
     aa("--data_augmentation", type=str, default="combined", help="Type of data augmentation to use at marking time. (Default: combined)")
     aa("--p_crop", type=float, default=0.5, help="Probability of the crop augmentation. (Default: 0.5)")
     aa("--p_res", type=float, default=0.5, help="Probability of the crop augmentation. (Default: 0.5)")
     aa("--p_blur", type=float, default=0.5, help="Probability of the blur augmentation. (Default: 0.5)")
     aa("--p_jpeg", type=float, default=0.5, help="Probability of the diff JPEG augmentation. (Default: 0.5)")
-    aa("--p_rot", type=float, default=0.5, help="Probability of the rotation augmentation. (Default: 0.5)")
-    aa("--p_color_jitter", type=float, default=0.5, help="Probability of the color jitter augmentation. (Default: 0.5)")
+    aa("--p_rot", type=float, default=0.0, help="Probability of the rotation augmentation. (Default: 0.5)")
+    aa("--p_color_jitter", type=float, default=0.0, help="Probability of the color jitter augmentation. (Default: 0.5)")
 
     group = parser.add_argument_group('Distributed training parameters')
     aa('--debug_slurm', action='store_true')

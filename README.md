@@ -21,32 +21,30 @@ cd stable_signature
 To install the main dependencies, we recommand using conda.
 [PyTorch](https://pytorch.org/) can be installed with:
 ```cmd
-<!-- conda install -c pytorch torchvision pytorch==1.12.0 cudatoolkit==11.3  (This does not work for me) -->
+#conda install -c pytorch torchvision pytorch==1.12.0 cudatoolkit==11.3  (and-mill: This does not work for me)
 conda install -c pytorch torchvision pytorch==1.12.0 nvidia/label/cuda-11.3.1::cuda-toolkit
 ```
 
 Install the remaining dependencies with pip:
 ```cmd
-<!-- pip install -r requirements.txt -->
-TMPDIR=/home/host_mueller/tmp/ pip install --cache-dir=/home/host_mueller/cache/ -r requirements.txt   (This is just me)
+#pip install -r requirements.txt
 ```
 
 This codebase has been developed with python version 3.8, PyTorch version 1.12.0, CUDA 11.3.
 
-### and-mill: Additional steps that I needed to take:
+<mark>and-mill: Additional steps that I needed to take:</mark>
 
-Last step, happened to me. Need to reinstall wcwidth:
+<mark>Last step, happened to me. Need to reinstall wcwidth:</mark>
 ```
 TMPDIR=/home/host_mueller/mueller/tmp/ pip3 install --cache-dir=/home/host_mueller/mueller/cache/ --user --force-reinstall wcwidth
 ```
 
-Also, create directory "sd". Download into it:
+<mark>Also, download stable diffusion base model 2-1:</mark>
 ```
-https://github.com/Stability-AI/stablediffusion/blob/main/configs/stable-diffusion/v2-inference.yaml
-```
-and
-```
-https://huggingface.co/stabilityai/stable-diffusion-2/blob/main/768-v-ema.ckpt
+mkdir sd/stable-diffusion-2-1-base
+cd sd/stable-diffusion-2-1-base
+wget https://github.com/Stability-AI/stablediffusion/blob/main/configs/stable-diffusion/v2-inference.yaml
+wget https://huggingface.co/stabilityai/stable-diffusion-2-1-base/resolve/main/v2-1_512-ema-pruned.ckpt
 ```
 
 ### Models and data
@@ -121,23 +119,31 @@ This code should generate:
 [Params of LDM fine-tuning used in the paper](https://justpaste.it/aw0gj)  
 [Logs during LDM fine-tuning](https://justpaste.it/cse0x)
 
+<mark>and-mill: Weights obtained after running [this command](https://justpaste.it/ae93f). Here is the full command:</mark>
+```
+python finetune_ldm_decoder.py --warmup_steps 20 --steps 100 --optimizer AdamW,lr=5e-4 --loss_i watson-vgg --loss_w bce --batch_size 4 --seed 0 --num_keys 10 --redundancy 1 --msg_mult 10 --decoder_depth 8 --num_bits 48 --msg_decoder_path /checkpoint/pfz/watermarking/models/hidden/dec_48b_whit.torchscript.pt --lambda_i 0.2 --ldm_config /checkpoint/pfz/autoencoders/sd/stable-diffusion-2-1/v2-inference.yaml --ldm_ckpt /checkpoint/pfz/autoencoders/sd/stable-diffusion-2-1-base/v2-1_512-ema-pruned.ckpt 
+```
+
 ### Generate
 
 #### With Stability AI codebase
 
 Reload weights of the LDM decoder in the Stable Diffusion scripts by appending the following lines after loading the checkpoint 
 (for instance, [L220 in the SD repo](https://github.com/Stability-AI/stablediffusion/blob/main/scripts/txt2img.py#L220))
-```python
+```
+python
 state_dict = torch.load(path/to/ldm/checkpoint_000.pth)['ldm_decoder']
 msg = model.first_stage_model.load_state_dict(state_dict, strict=False)
 print(f"loaded LDM decoder state_dict with message\n{msg}")
 print("you should check that the decoder keys are correctly matched")
 ```
 
-You should also comment the lines that add the post-hoc watermark of SD: `img = put_watermark(img, wm_encoder)`.
+You should also comment the lines that add the build-in, standard post-hoc watermark of SD: `img = put_watermark(img, wm_encoder)`.
 
 [WM weights of SD2 decoder](https://dl.fbaipublicfiles.com/ssl_watermarking/sd2_decoder.pth). Weights obtained after running [this command](https://justpaste.it/ae93f). 
 In this case, the state dict only contains the 'ldm_decoder' key, so you only need to load with `state_dict = torch.load(path/to/ckpt.pth)`
+
+<mark>and-mill: put the sd2_decoder.pth into models/</mark>
 
 #### With Diffusers
 
@@ -149,7 +155,8 @@ To make this run.
 
 Here is a code snippet that could be used to reload the decoder with the Diffusers library (transformers==4.25.1, diffusers==0.25.1). (Still WIP, this might be updated in the future!)
 
-```python
+```
+python
 import torch 
 device = torch.device("cuda")
 
