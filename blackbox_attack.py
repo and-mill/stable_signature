@@ -379,7 +379,7 @@ class HiddenDecoder(torch.nn.Module):
     
     
 class LitClassifier(pl.LightningModule):
-    def __init__(self, lr=1e-3):
+    def __init__(self, lr=1e-3, which="resnet18"):
         super().__init__()
         print("creating model")
         # self.model = HiddenDecoder(8, 1, 3)
@@ -443,8 +443,8 @@ class LitClassifier(pl.LightningModule):
         
         
     
-def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000", 
-         lr=5e-4, batsize=16, epochs=15, device=0, seed=42, 
+def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000", which="resnet18",
+         lr=5e-4, batsize=16, epochs=7, device=0, seed=142, 
          debug=False, ckpt=None, finetune=False):
     seed_everything(seed)
     VALID_BATSIZE = 8
@@ -457,7 +457,7 @@ def main(wmpath="images/coco_wm_1000/", realpath="images/coco_original_1000",
     gpu = device
     device = torch.device("cuda", device)
     
-    model = LitClassifier(lr=lr)
+    model = LitClassifier(lr=lr, which=which)
     
     dotrain = True
     if ckpt is not None:

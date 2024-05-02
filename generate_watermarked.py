@@ -6,6 +6,8 @@ import fire
 from watermark_utils import load_model, decode_message_pil, eval_message
 
 
+# TODO: generated 1000 images and repeat AE attacks
+
 def main(device=3, prompts="the cat drinks water.", savedir="", savenames="cat.no_wm", use_watermark=True, seed=None):
     prompts = prompts.split(",")
     savenames = savenames.split(",")
