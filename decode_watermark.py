@@ -10,7 +10,7 @@ from watermark_utils import decode_message_pil, eval_message
 from PIL import Image
 
 
-def main(device=1, path="attacked_wm_flip/*"):
+def main(device=1, path="images/coco_1000_iDDIM_1of100/*"):
     device = torch.device("cuda", device)
     
     msg_extractor = torch.jit.load("models/dec_48b_whit.torchscript.pt").to(device)

@@ -24,6 +24,7 @@ from torchvision.utils import save_image
 import utils
 import utils_img
 import utils_model
+import functools
 
 sys.path.append('src')
 from ldm.models.autoencoder import AutoencoderKL
@@ -40,10 +41,8 @@ def get_parser():
         group.add_argument(*args, **kwargs)
 
     group = parser.add_argument_group('Data parameters')
-    #aa("--train_dir", default="../coco2017/train2017/", type=str, help="Path to the training data directory", required=False)
-    aa("--train_dir", default="/home/host_datasets/COCO/train2017/", type=str, help="Path to the training data directory", required=False)
-    #aa("--val_dir", default="../coco2017/val2017/", type=str, help="Path to the validation data directory", required=False)
-    aa("--val_dir", default="/home/host_datasets/COCO/val2017/", type=str, help="Path to the validation data directory", required=False)
+    aa("--train_dir", default="../coco2017/train2017/", type=str, help="Path to the training data directory", required=False)
+    aa("--val_dir", default="../coco2017/val2017/", type=str, help="Path to the validation data directory", required=False)
 
     group = parser.add_argument_group('Model parameters')
     # aa("--ldm_config", type=str, default="sd/stable-diffusion-v-1-4-original/v1-inference.yaml", help="Path to the configuration file for the LDM model") 
@@ -63,10 +62,10 @@ def get_parser():
     aa("--img_size", type=int, default=256, help="Resize images to this size")
     aa("--loss_i", type=str, default="watson-vgg", help="Type of loss for the image loss. Can be watson-vgg, mse, watson-dft, etc.")
     aa("--loss_w", type=str, default="bce", help="Type of loss for the watermark loss. Can be mse or bce")
-    aa("--lambda_i", type=float, default=1.0, help="Weight of the image loss in the total loss")
-    aa("--lambda_i_2", type=float, default=1.0, help="Weight of the image loss in the total loss")
+    aa("--lambda_i", type=float, default=1.0, help="Weight of the image loss in the final loss for the decoder")
+    aa("--lambda_d", type=float, default=0.01, help="Weight of the adverarial loss in the final loss for the decoder")
     aa("--lambda_w", type=float, default=0, help="Weight of the watermark loss in the total loss")
-    aa("--optimizer", type=str, default="AdamW,lr=5e-5", help="Optimizer and learning rate for training")
+    aa("--optimizer", type=str, default="AdamW,lr=1e-4", help="Optimizer and learning rate for training")
     aa("--steps", type=int, default=10000, help="Number of steps to train the model for")
     aa("--warmup_steps", type=int, default=200, help="Number of warmup steps for the optimizer")
 
@@ -76,11 +75,181 @@ def get_parser():
 
     group = parser.add_argument_group('Experiments parameters')
     # aa("--num_keys", type=int, default=1, help="Number of fine-tuned checkpoints to generate")
-    aa("--output_dir", type=str, default="purified_decoder_10000steps/", help="Output directory for logs and images (Default: /output)")
+    aa("--output_dir", type=str, default="purified_decoder_10000steps_adv/", help="Output directory for logs and images (Default: /output)")
     aa("--seed", type=int, default=0)
     aa("--debug", type=utils.bool_inst, default=False, help="Debug mode")
 
     return parser
+
+
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
+
+
+class ActNorm(nn.Module):
+    def __init__(self, num_features, logdet=False, affine=True,
+                 allow_reverse_init=False):
+        assert affine
+        super().__init__()
+        self.logdet = logdet
+        self.loc = nn.Parameter(torch.zeros(1, num_features, 1, 1))
+        self.scale = nn.Parameter(torch.ones(1, num_features, 1, 1))
+        self.allow_reverse_init = allow_reverse_init
+
+        self.register_buffer('initialized', torch.tensor(0, dtype=torch.uint8))
+
+    def initialize(self, input):
+        with torch.no_grad():
+            flatten = input.permute(1, 0, 2, 3).contiguous().view(input.shape[1], -1)
+            mean = (
+                flatten.mean(1)
+                .unsqueeze(1)
+                .unsqueeze(2)
+                .unsqueeze(3)
+                .permute(1, 0, 2, 3)
+            )
+            std = (
+                flatten.std(1)
+                .unsqueeze(1)
+                .unsqueeze(2)
+                .unsqueeze(3)
+                .permute(1, 0, 2, 3)
+            )
+
+            self.loc.data.copy_(-mean)
+            self.scale.data.copy_(1 / (std + 1e-6))
+
+    def forward(self, input, reverse=False):
+        if reverse:
+            return self.reverse(input)
+        if len(input.shape) == 2:
+            input = input[:,:,None,None]
+            squeeze = True
+        else:
+            squeeze = False
+
+        _, _, height, width = input.shape
+
+        if self.training and self.initialized.item() == 0:
+            self.initialize(input)
+            self.initialized.fill_(1)
+
+        h = self.scale * (input + self.loc)
+
+        if squeeze:
+            h = h.squeeze(-1).squeeze(-1)
+
+        if self.logdet:
+            log_abs = torch.log(torch.abs(self.scale))
+            logdet = height*width*torch.sum(log_abs)
+            logdet = logdet * torch.ones(input.shape[0]).to(input)
+            return h, logdet
+
+        return h
+
+    def reverse(self, output):
+        if self.training and self.initialized.item() == 0:
+            if not self.allow_reverse_init:
+                raise RuntimeError(
+                    "Initializing ActNorm in reverse direction is "
+                    "disabled by default. Use allow_reverse_init=True to enable."
+                )
+            else:
+                self.initialize(output)
+                self.initialized.fill_(1)
+
+        if len(output.shape) == 2:
+            output = output[:,:,None,None]
+            squeeze = True
+        else:
+            squeeze = False
+
+        h = output / self.scale - self.loc
+
+        if squeeze:
+            h = h.squeeze(-1).squeeze(-1)
+        return h
+
+
+    
+class ResnetDiscriminator(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        print("creating model")
+        # self.model = HiddenDecoder(8, 1, 3)
+        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
+        self.model.fc = torch.nn.Linear(512, 1)
+        # self.model.fc = torch.nn.Identity()
+        print("model created")
+        
+    def forward(self, x):
+        ret = self.model(x)
+        return ret
+
+
+class NLayerDiscriminator(nn.Module):
+    """Defines a PatchGAN discriminator as in Pix2Pix
+        --> see https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/models/networks.py
+    """
+    def __init__(self, input_nc=3, ndf=64, n_layers=3, use_actnorm=False):
+        """Construct a PatchGAN discriminator
+        Parameters:
+            input_nc (int)  -- the number of channels in input images
+            ndf (int)       -- the number of filters in the last conv layer
+            n_layers (int)  -- the number of conv layers in the discriminator
+            norm_layer      -- normalization layer
+        """
+        super(NLayerDiscriminator, self).__init__()
+        if not use_actnorm:
+            norm_layer = nn.BatchNorm2d
+        else:
+            norm_layer = ActNorm
+        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+            use_bias = norm_layer.func != nn.BatchNorm2d
+        else:
+            use_bias = norm_layer != nn.BatchNorm2d
+
+        kw = 4
+        padw = 1
+        sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):  # gradually increase the number of filters
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            sequence += [
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                norm_layer(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
+            sequence += [
+                nn.Conv2d(ndf * nf_mult, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+                norm_layer(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2 ** n_layers, 8)
+        sequence += [
+            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            norm_layer(ndf * nf_mult),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        sequence += [
+            nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        self.main = nn.Sequential(*sequence)
+
+    def forward(self, input):
+        """Standard forward."""
+        ret = self.main(input)
+        return ret
+
 
 
 def main(params):
@@ -215,11 +384,6 @@ def main(params):
         loss_percep = provider.get_loss_function('SSIM', colorspace='RGB', pretrained=True, reduction='sum')
         loss_percep = loss_percep.to(device)
         loss_i = lambda imgs_w, imgs: loss_percep((1+imgs_w)/2.0, (1+imgs)/2.0)/ imgs_w.shape[0]
-    elif params.loss_i == 'l2_and_watson-vgg':
-        provider = LossProvider()
-        loss_percep = provider.get_loss_function('Watson-VGG', colorspace='RGB', pretrained=True, reduction='sum')
-        loss_percep = loss_percep.to(device)
-        loss_i = lambda imgs_w, imgs: params.lambda_i * loss_percep((1+imgs_w)/2.0, (1+imgs)/2.0)/ imgs_w.shape[0] + params.lambda_i_2 * nn.MSELoss()(imgs_w, imgs)  # lambda applied here
     else:
         raise NotImplementedError
 
@@ -273,6 +437,56 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
     ldm_decoder.decoder.train()
     base_lr = optimizer.param_groups[0]["lr"]
     
+    use_pretrained_discriminator = True
+    
+    # discriminator = NLayerDiscriminator(ndf=128, n_layers=4)
+    discriminator = ResnetDiscriminator()
+    # discriminator.load_state_dict(torch.load("blackbox_checkpoints/resnet_142/model.ckpt")["state_dict"])
+    if use_pretrained_discriminator:
+        discriminator.load_state_dict(torch.load("pretrained_discriminator.pth"))
+    discriminator.to(device)
+    optim_params = utils.parse_params(params.optimizer)
+    optim_params["lr"] = 1e-4
+    optimizer_D = utils.build_optimizer(model_params=discriminator.parameters(), **optim_params)
+    discriminator.train()
+    
+    # pretrain discriminator
+    discr_pretrain_steps = 2500
+    
+    if use_pretrained_discriminator:
+        discr_pretrain_steps = 100
+        
+    if True:
+        accloss, accacc = [], []
+        for ii, imgs in enumerate(data_loader):
+            imgs = imgs.to(device)
+            with torch.no_grad():
+                imgs_w = ldm_decoder.decode(ldm_ae.encode(imgs).mode()).detach()     # should be predicted as fake
+            discr_pred_real = discriminator(vqgan_to_imnet(imgs))
+            discr_pred_wm = discriminator(vqgan_to_imnet(imgs_w))
+            
+            loss = torch.log(torch.sigmoid(discr_pred_real)) + torch.log(1 - torch.sigmoid(discr_pred_wm))
+            (-loss).mean().backward()
+            optimizer_D.step()
+            optimizer_D.zero_grad()
+            
+            accuracy = torch.cat([discr_pred_real > 0, discr_pred_wm < 0], 0).float()
+            accacc.append(accuracy)
+            accloss.append(loss)
+            
+            if ii % 100 == 0:
+                accacc = torch.cat(accacc, 0)
+                accloss = torch.cat(accloss, 0)
+                print(f"step {ii}, discriminator loss: {accloss.mean().cpu().item():.3f}, accuracy: {accacc.mean().cpu().item()*100:.3f}%")
+                accloss = []
+                accacc = []
+            if ii >= discr_pretrain_steps:
+                break
+        
+    print("pretrained discriminator")
+        
+    discr_steps_per_gen_step = 5
+    
     save_imgs = []
     count = 0
     for save_imgs_i in data_loader:      # 2 batches
@@ -280,6 +494,8 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
         count += 1
         if count >= 2:
             break
+        
+    queue = [-10000]
     
     for ii, imgs in enumerate(metric_logger.log_every(data_loader, params.log_freq, header)):
         imgs = imgs.to(device)
@@ -287,49 +503,90 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
         
         utils.adjust_learning_rate(optimizer, ii, params.steps, params.warmup_steps, base_lr)
         # encode images
-        imgs_z = ldm_ae.encode(imgs) # b c h w -> b z h/f w/f
-        imgs_z = imgs_z.mode()
+        with torch.no_grad():
+            imgs_z = ldm_ae.encode(imgs) # b c h w -> b z h/f w/f
+            imgs_z = imgs_z.mode().detach()
 
         # decode latents with original and finetuned decoder
-        imgs_d0 = ldm_ae.decode(imgs_z) # b z h/f w/f -> b c h w
-        #imgs_d0 = imgs
-        imgs_w = ldm_decoder.decode(imgs_z) # b z h/f w/f -> b c h w
+        # imgs_d0 = ldm_ae.decode(imgs_z) # b z h/f w/f -> b c h w
+        imgs_d0 = imgs
+        
+        if np.mean(queue) < -0.5:
+        # if ii % discr_steps_per_gen_step == 0:
+            imgs_w = ldm_decoder.decode(imgs_z) # b z h/f w/f -> b c h w
+        else:
+            with torch.no_grad():
+                imgs_w = ldm_decoder.decode(imgs_z).detach() # b z h/f w/f -> b c h w
+                
+        discr_grad_img = torch.nn.Parameter(torch.zeros_like(imgs_w[0:1]))
+                
+        discr_pred_real = discriminator(vqgan_to_imnet(imgs))
+        discr_pred_wm = discriminator(vqgan_to_imnet(imgs_w + discr_grad_img))
+        
+        
+        lossd = torch.log(torch.sigmoid(discr_pred_real)) + torch.log(1 - torch.sigmoid(discr_pred_wm))
+        loss = lossd.mean() * params.lambda_d
+        queue.append(lossd.mean().cpu().item())
+        while len(queue) > 3:
+            queue.pop(0)
+        
+        # # savedgrads = {k: v.grad.clone() for k, v in ldm_decoder.named_parameters()}
+        # optimizer_D.zero_grad()     # removes only grads on discriminator, leaves the ones on generator
+        # optimizer.zero_grad()
+        
+        if np.mean(queue) > -0.5 or ii == 0:
+        # if ii % discr_steps_per_gen_step == 0:
+            # UPDATE GENERATOR
+            
+            # # copy grads from generator
+            # gen_grads_adv = {k: v.grad for k, v in ldm_decoder.named_parameters()}
+            # # flip the grad because we want to minimize lossd next
+            # gen_grads_adv = {k: -v for k, v in gen_grads_adv.items()}
+            # # compute grad norm
+            # gen_grad_adv_norm = sum([grad.sum() for grad in gen_grads_adv.values()])
+            # gen_grad_adv_norm_count = sum([grad.numel() for grad in gen_grads_adv.values()])
 
-        # extract watermark
-        decoded = msg_decoder(vqgan_to_imnet(imgs_w)) # b c h w -> b k
+            
+            # compute loss
+            perc_grad_img = torch.nn.Parameter(torch.zeros_like(imgs_w[0:1]))
+            lossi = loss_i(imgs_w + perc_grad_img, imgs_d0)
+            loss = loss + params.lambda_i * lossi
+            
+            decoded = msg_decoder(vqgan_to_imnet(imgs_w)) # b c h w -> b k
+            lossw = loss_w(decoded, keys)
+            # loss = loss + params.lambda_w * lossw
 
-        # compute loss
-        loss = 0
-        #lossi = loss_i(imgs_w, imgs_d0)
-        lossi = loss_i(imgs_w, imgs)
-        #loss = loss + params.lambda_i * lossi  # we apply lambda already earlier for l2_and_watson-vgg loss
-        loss = lossi
-        lossw = loss_w(decoded, keys)
-        # loss = loss + params.lambda_w * lossw
-
-        # optim step
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+            # optim step
+            loss.backward()                
+            optimizer.step()
+            optimizer.zero_grad()
+        else:
+            loss.backward()
+            
+        # flip and rescale back the gradient on discriminator
+        for k, v in discriminator.named_parameters():
+            v.grad = v.grad * (-1) / params.lambda_d
+        optimizer_D.step()
+        optimizer_D.zero_grad()
 
         # log stats
         diff = (~torch.logical_xor(decoded>0, keys>0)) # b k -> b k
         bit_accs = torch.sum(diff, dim=-1) / diff.shape[-1] # b k -> b
-        word_accs = (bit_accs == 1) # b
+        # word_accs = (bit_accs == 1) # b
         log_stats = {
             "iteration": int(ii),
             "loss": loss.item(),
             "loss_w": lossw.item(),
             "loss_i": lossi.item(),
+            "loss_d": lossd.mean().item(),
             "psnr": utils_img.psnr(imgs_w, imgs_d0).mean().item(),
-            "psnr_to_original": utils_img.psnr(imgs_w, imgs).mean().item(),
             # "psnr_ori": utils_img.psnr(imgs_w, imgs).mean().item(),
             "bit_acc_avg": torch.mean(bit_accs).item(),
             # "word_acc_avg": torch.mean(word_accs.type(torch.float)).item(),
             "lr": optimizer.param_groups[0]["lr"],
         }
-        for name, loss in log_stats.items():
-            metric_logger.update(**{name:loss})
+        for _name, _loss in log_stats.items():
+            metric_logger.update(**{_name:_loss})
         # if ii % params.log_freq == 0:
         #     print(json.dumps(log_stats))
         
@@ -342,8 +599,8 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
                 imgs_z_i = ldm_ae.encode(save_imgs_i).mode() # b c h w -> b z h/f w/f
 
                 # decode latents with original and finetuned decoder
-                imgs_d0_i = ldm_ae.decode(imgs_z_i) # b z h/f w/f -> b c h w
-                #imgs_d0_i = save_imgs_i
+                # imgs_d0_i = ldm_ae.decode(imgs_z_i) # b z h/f w/f -> b c h w
+                imgs_d0_i = save_imgs_i
                 imgs_w_i = ldm_decoder.decode(imgs_z_i) # b z h/f w/f -> b c h w
                 save_imgs_d0.append(imgs_d0_i)
                 save_imgs_w.append(imgs_w_i)

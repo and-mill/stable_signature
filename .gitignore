@@ -1,6 +1,8 @@
 !images
 images/*
 !images/generated
+!images/coco_original_1000
+!images/coco_wm_1000
 *.pyc
 loss/losses/*.pth
 sd/*
