@@ -7,3 +7,5 @@ sd/*
 src/loss/losses/*.pth
 trained_decoders/*
 models/*
+purified_decoder_1000*
+output

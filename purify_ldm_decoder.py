@@ -40,8 +40,10 @@ def get_parser():
         group.add_argument(*args, **kwargs)
 
     group = parser.add_argument_group('Data parameters')
-    aa("--train_dir", default="../coco2017/train2017/", type=str, help="Path to the training data directory", required=False)
-    aa("--val_dir", default="../coco2017/val2017/", type=str, help="Path to the validation data directory", required=False)
+    #aa("--train_dir", default="../coco2017/train2017/", type=str, help="Path to the training data directory", required=False)
+    aa("--train_dir", default="/home/host_datasets/COCO/train2017/", type=str, help="Path to the training data directory", required=False)
+    #aa("--val_dir", default="../coco2017/val2017/", type=str, help="Path to the validation data directory", required=False)
+    aa("--val_dir", default="/home/host_datasets/COCO/val2017/", type=str, help="Path to the validation data directory", required=False)
 
     group = parser.add_argument_group('Model parameters')
     # aa("--ldm_config", type=str, default="sd/stable-diffusion-v-1-4-original/v1-inference.yaml", help="Path to the configuration file for the LDM model") 
@@ -62,6 +64,7 @@ def get_parser():
     aa("--loss_i", type=str, default="watson-vgg", help="Type of loss for the image loss. Can be watson-vgg, mse, watson-dft, etc.")
     aa("--loss_w", type=str, default="bce", help="Type of loss for the watermark loss. Can be mse or bce")
     aa("--lambda_i", type=float, default=1.0, help="Weight of the image loss in the total loss")
+    aa("--lambda_i_2", type=float, default=1.0, help="Weight of the image loss in the total loss")
     aa("--lambda_w", type=float, default=0, help="Weight of the watermark loss in the total loss")
     aa("--optimizer", type=str, default="AdamW,lr=1e-4", help="Optimizer and learning rate for training")
     aa("--steps", type=int, default=4000, help="Number of steps to train the model for")
@@ -212,6 +215,11 @@ def main(params):
         loss_percep = provider.get_loss_function('SSIM', colorspace='RGB', pretrained=True, reduction='sum')
         loss_percep = loss_percep.to(device)
         loss_i = lambda imgs_w, imgs: loss_percep((1+imgs_w)/2.0, (1+imgs)/2.0)/ imgs_w.shape[0]
+    elif params.loss_i == 'l2_and_watson-vgg':
+        provider = LossProvider()
+        loss_percep = provider.get_loss_function('Watson-VGG', colorspace='RGB', pretrained=True, reduction='sum')
+        loss_percep = loss_percep.to(device)
+        loss_i = lambda imgs_w, imgs: params.lambda_i * loss_percep((1+imgs_w)/2.0, (1+imgs)/2.0)/ imgs_w.shape[0] + params.lambda_i_2 * nn.MSELoss()(imgs_w, imgs)  # lambda applied here
     else:
         raise NotImplementedError
 
@@ -283,8 +291,8 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
         imgs_z = imgs_z.mode()
 
         # decode latents with original and finetuned decoder
-        # imgs_d0 = ldm_ae.decode(imgs_z) # b z h/f w/f -> b c h w
-        imgs_d0 = imgs
+        imgs_d0 = ldm_ae.decode(imgs_z) # b z h/f w/f -> b c h w
+        #imgs_d0 = imgs
         imgs_w = ldm_decoder.decode(imgs_z) # b z h/f w/f -> b c h w
 
         # extract watermark
@@ -292,8 +300,10 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
 
         # compute loss
         loss = 0
-        lossi = loss_i(imgs_w, imgs_d0)
-        loss = loss + params.lambda_i * lossi
+        #lossi = loss_i(imgs_w, imgs_d0)
+        lossi = loss_i(imgs_w, imgs)
+        #loss = loss + params.lambda_i * lossi  # we apply lambda already earlier for l2_and_watson-vgg loss
+        loss = lossi
         lossw = loss_w(decoded, keys)
         loss = loss + params.lambda_w * lossw
 
@@ -312,6 +322,7 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
             "loss_w": lossw.item(),
             "loss_i": lossi.item(),
             "psnr": utils_img.psnr(imgs_w, imgs_d0).mean().item(),
+            "psnr_to_original": utils_img.psnr(imgs_w, imgs).mean().item(),
             # "psnr_ori": utils_img.psnr(imgs_w, imgs).mean().item(),
             "bit_acc_avg": torch.mean(bit_accs).item(),
             # "word_acc_avg": torch.mean(word_accs.type(torch.float)).item(),
@@ -331,8 +342,8 @@ def train(data_loader: Iterable, optimizer: torch.optim.Optimizer, loss_w: Calla
                 imgs_z_i = ldm_ae.encode(save_imgs_i).mode() # b c h w -> b z h/f w/f
 
                 # decode latents with original and finetuned decoder
-                # imgs_d0_i = ldm_ae.decode(imgs_z_i) # b z h/f w/f -> b c h w
-                imgs_d0_i = save_imgs_i
+                imgs_d0_i = ldm_ae.decode(imgs_z_i) # b z h/f w/f -> b c h w
+                #imgs_d0_i = save_imgs_i
                 imgs_w_i = ldm_decoder.decode(imgs_z_i) # b z h/f w/f -> b c h w
                 save_imgs_d0.append(imgs_d0_i)
                 save_imgs_w.append(imgs_w_i)

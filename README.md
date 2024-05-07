@@ -121,7 +121,8 @@ This code should generate:
 
 <mark>and-mill: Weights obtained after running [this command](https://justpaste.it/ae93f). Here is the full command:</mark>
 ```
-python finetune_ldm_decoder.py --warmup_steps 20 --steps 100 --optimizer AdamW,lr=5e-4 --loss_i watson-vgg --loss_w bce --batch_size 4 --seed 0 --num_keys 10 --redundancy 1 --msg_mult 10 --decoder_depth 8 --num_bits 48 --msg_decoder_path /checkpoint/pfz/watermarking/models/hidden/dec_48b_whit.torchscript.pt --lambda_i 0.2 --ldm_config /checkpoint/pfz/autoencoders/sd/stable-diffusion-2-1/v2-inference.yaml --ldm_ckpt /checkpoint/pfz/autoencoders/sd/stable-diffusion-2-1-base/v2-1_512-ema-pruned.ckpt 
+#python finetune_ldm_decoder.py --warmup_steps 20 --steps 100 --optimizer AdamW,lr=5e-4 --loss_i watson-vgg --loss_w bce --batch_size 4 --seed 0 --num_keys 10 --redundancy 1 --msg_mult 10 --decoder_depth 8 --num_bits 48 --msg_decoder_path models/dec_48b_whit.torchscript.pt --lambda_i 0.2 --ldm_config sd/stable-diffusion-2-1-base/v2-inference.yaml --ldm_ckpt sd/stable-diffusion-2-1-base/v2-1_512-ema-pruned.ckpt --train_dir /home/host_datasets/COCO/train2017 --val_dir /home/host_datasets/COCO/val2017
+python finetune_ldm_decoder.py --warmup_steps 20 --steps 100 --optimizer AdamW,lr=5e-4 --loss_i watson-vgg --loss_w bce --batch_size 4 --seed 0 --num_keys 10 --redundancy 1 --decoder_depth 8 --num_bits 48 --msg_decoder_path models/dec_48b_whit.torchscript.pt --lambda_i 0.2 --ldm_config sd/stable-diffusion-2-1-base/v2-inference.yaml --ldm_ckpt sd/stable-diffusion-2-1-base/v2-1_512-ema-pruned.ckpt --train_dir /home/host_datasets/COCO/train2017 --val_dir /home/host_datasets/COCO/val2017
 ```
 
 ### Generate
